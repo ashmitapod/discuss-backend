@@ -2,6 +2,7 @@ import os
 from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
+from flask_cors import CORS  # Import is already here
 from marshmallow import ValidationError
 import cloudinary
 from flask_login import LoginManager
@@ -13,7 +14,7 @@ from threaddit.config import (
     CLOUDINARY_NAME,
 )
 
-# Use the backend/static folder for serving frontend
+# Use the backend/static folder for serving frontend static
 static_folder_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../static")
 
 app = Flask(
@@ -21,6 +22,9 @@ app = Flask(
     static_folder=static_folder_path,
     static_url_path="/",
 )
+
+# Add this line to initialize CORS - this is what was missing
+CORS(app, resources={r"/*": {"origins": "https://discuss-frontend.vercel.app", "supports_credentials": True}})
 
 # Cloudinary config
 cloudinary.config(
@@ -71,3 +75,12 @@ app.register_blueprint(posts)
 app.register_blueprint(comments)
 app.register_blueprint(reactions)
 app.register_blueprint(messages)
+
+@app.route("/db-test")
+def db_test():
+    try:
+        result = db.engine.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
+        tables = [row[0] for row in result]
+        return jsonify({"connected": True, "tables": tables})
+    except Exception as e:
+        return jsonify({"connected": False, "error": str(e)})

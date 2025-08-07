@@ -2,7 +2,7 @@ import os
 from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
-from flask_cors import CORS  # Import is already here
+from flask_cors import CORS
 from marshmallow import ValidationError
 import cloudinary
 from flask_login import LoginManager
@@ -14,17 +14,23 @@ from threaddit.config import (
     CLOUDINARY_NAME,
 )
 
-# Use the backend/static folder for serving frontend static
-static_folder_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../static")
+app = Flask(__name__)
 
-app = Flask(
-    __name__,
-    static_folder=static_folder_path,
-    static_url_path="/",
-)
-
-# Add this line to initialize CORS - this is what was missing
-CORS(app, resources={r"/*": {"origins": "https://discuss-frontend.vercel.app", "supports_credentials": True}})
+# CORS Configuration - Updated for production
+# Allow multiple origins for development and production
+CORS(app, 
+     resources={
+         r"/api/*": {
+             "origins": [
+                 "https://discuss-frontend.vercel.app",
+                 "https://*.vercel.app",
+                 "http://localhost:5173"
+             ],
+             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+             "supports_credentials": True
+         }
+     })
 
 # Cloudinary config
 cloudinary.config(
@@ -37,6 +43,14 @@ cloudinary.config(
 app.config["CLOUDINARY_NAME"] = CLOUDINARY_NAME
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
 app.config["SECRET_KEY"] = SECRET_KEY
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False  # Disable to save memory
+
+# Production optimizations
+if os.environ.get('FLASK_ENV') == 'production':
+    app.config["DEBUG"] = False
+    app.config["TESTING"] = False
+else:
+    app.config["DEBUG"] = True
 
 # Init extensions
 db = SQLAlchemy(app)
@@ -47,11 +61,23 @@ ma = Marshmallow(app)
 def callback():
     return jsonify({"message": "Unauthorized"}), 401
 
-# Serve frontend routes from static/index.html
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def catch_all(path):
-    return app.send_static_file("index.html")
+# Health check endpoint for monitoring
+@app.route("/health")
+def health_check():
+    return jsonify({
+        "status": "healthy",
+        "environment": os.environ.get('FLASK_ENV', 'development'),
+        "timestamp": str(db.func.now())
+    }), 200
+
+# API status endpoint
+@app.route("/api/status")
+def api_status():
+    return jsonify({
+        "api": "online",
+        "version": "1.0",
+        "database": "connected"
+    }), 200
 
 @app.errorhandler(ValidationError)
 def handle_marshmallow_validation(err):
@@ -59,28 +85,38 @@ def handle_marshmallow_validation(err):
 
 @app.errorhandler(404)
 def not_found(e):
-    return app.send_static_file("index.html")
+    return jsonify({"error": "Endpoint not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(e):
+    db.session.rollback()
+    return jsonify({"error": "Internal server error"}), 500
+
+# Database test endpoint (remove in production if not needed)
+@app.route("/db-test")
+def db_test():
+    try:
+        # Updated for newer SQLAlchemy versions
+        with db.engine.connect() as connection:
+            result = connection.execute(db.text("SELECT tablename FROM pg_tables WHERE schemaname = 'public';"))
+            tables = [row[0] for row in result]
+        return jsonify({"connected": True, "tables": tables})
+    except Exception as e:
+        return jsonify({"connected": False, "error": str(e)}), 500
 
 # Register blueprints
 from threaddit.users.routes import user
-from threaddit.subthreads.routes import threads
+from threaddit.subthreads.routes import threads  
 from threaddit.posts.routes import posts
 from threaddit.comments.routes import comments
 from threaddit.reactions.routes import reactions
 from threaddit.messages.routes import messages
 
-app.register_blueprint(user)
-app.register_blueprint(threads)
-app.register_blueprint(posts)
-app.register_blueprint(comments)
-app.register_blueprint(reactions)
-app.register_blueprint(messages)
+app.register_blueprint(user, url_prefix='/api')
+app.register_blueprint(threads, url_prefix='/api')
+app.register_blueprint(posts, url_prefix='/api')
+app.register_blueprint(comments, url_prefix='/api')
+app.register_blueprint(reactions, url_prefix='/api')
+app.register_blueprint(messages, url_prefix='/api')
 
-@app.route("/db-test")
-def db_test():
-    try:
-        result = db.engine.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
-        tables = [row[0] for row in result]
-        return jsonify({"connected": True, "tables": tables})
-    except Exception as e:
-        return jsonify({"connected": False, "error": str(e)})
+# Remove static file serving and catch-all routes for API-only backend

@@ -72,6 +72,13 @@ if os.environ.get('FLASK_ENV') == 'production':
 else:
     app.config["DEBUG"] = True
 
+# Debug logging - remove after fixing
+print(f"DEBUG - DATABASE_URI from config: {DATABASE_URI}")
+print(f"DEBUG - SQLALCHEMY_DATABASE_URI env var: {os.environ.get('SQLALCHEMY_DATABASE_URI')}")
+print(f"DEBUG - DATABASE_URL env var: {os.environ.get('DATABASE_URL')}")
+print(f"DEBUG - Final database_uri: {database_uri}")
+print(f"DEBUG - App config DATABASE_URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
+
 # Validate critical configuration
 if not app.config["SQLALCHEMY_DATABASE_URI"]:
     raise RuntimeError("SQLALCHEMY_DATABASE_URI must be set. Check your environment variables or config file.")

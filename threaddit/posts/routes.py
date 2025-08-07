@@ -57,18 +57,31 @@ def get_post(pid):
 @posts.route("/post", methods=["POST"])
 @login_required
 def new_post():
-    image = request.files.get("media")
-    form_data = request.form.to_dict()
-    PostValidator().load(
-        {
-            "subthread_id": form_data.get("subthread_id"),
-            "title": form_data.get("title"),
-            "content": form_data.get("content"),
-        }
-    )
-    Posts.add(form_data, image, current_user.id)
-    return jsonify({"message": "Post created"}), 200
+    try:
+        print("Received form data:", request.form.to_dict())
+        print("Received files:", request.files)
 
+        image = request.files.get("media")
+        form_data = request.form.to_dict()
+
+        if not form_data.get("title"):
+            return jsonify({"message": "Title is required"}), 400
+        if not form_data.get("subthread_id"):
+            return jsonify({"message": "Thread selection is required"}), 400
+
+        form_data["subthread_id"] = int(form_data["subthread_id"])
+        validated_data = PostValidator().load(
+            {
+                "subthread_id": form_data.get("subthread_id"),
+                "title": form_data.get("title"),
+                "content": form_data.get("content"),
+            }
+        )
+        Posts.add(form_data, image, current_user.id)
+        return jsonify({"message": "Post created"}), 200
+    except Exception as e:
+        print("Validation error:", str(e))
+        return jsonify({"message": str(e)}), 400
 
 @posts.route("/post/<pid>", methods=["PATCH"])
 @login_required

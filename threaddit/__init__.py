@@ -6,25 +6,36 @@ from flask_cors import CORS
 from marshmallow import ValidationError
 import cloudinary
 from flask_login import LoginManager
-from threaddit.config import (
-    DATABASE_URI,
-    SECRET_KEY,
-    CLOUDINARY_API_SECRET,
-    CLOUDINARY_API_KEY,
-    CLOUDINARY_NAME,
-)
+
+# Import config with fallback to environment variables
+try:
+    from threaddit.config import (
+        DATABASE_URI,
+        SECRET_KEY,
+        CLOUDINARY_API_SECRET,
+        CLOUDINARY_API_KEY,
+        CLOUDINARY_NAME,
+    )
+except ImportError:
+    # Fallback to environment variables if config file is missing
+    DATABASE_URI = os.environ.get('SQLALCHEMY_DATABASE_URI')
+    SECRET_KEY = os.environ.get('SECRET_KEY')
+    CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
+    CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
+    CLOUDINARY_NAME = os.environ.get('CLOUDINARY_NAME')
 
 app = Flask(__name__)
 
 # CORS Configuration - Updated for production
 # Allow multiple origins for development and production
-CORS(app, 
+CORS(app,
      resources={
          r"/api/*": {
              "origins": [
                  "https://discuss-frontend.vercel.app",
                  "https://*.vercel.app",
-                 "http://localhost:5173"
+                 "http://localhost:5173",
+                 "http://localhost:5174"
              ],
              "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
@@ -32,17 +43,26 @@ CORS(app,
          }
      })
 
-# Cloudinary config
-cloudinary.config(
-    cloud_name=CLOUDINARY_NAME,
-    api_key=CLOUDINARY_API_KEY,
-    api_secret=CLOUDINARY_API_SECRET,
-)
+# Cloudinary config (only if credentials are available)
+if CLOUDINARY_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+    cloudinary.config(
+        cloud_name=CLOUDINARY_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+    )
 
-# Flask app config
+# Flask app config with environment variable fallbacks
 app.config["CLOUDINARY_NAME"] = CLOUDINARY_NAME
-app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
-app.config["SECRET_KEY"] = SECRET_KEY
+
+# CRITICAL: Database URI configuration with fallbacks
+database_uri = DATABASE_URI or os.environ.get('SQLALCHEMY_DATABASE_URI') or os.environ.get('DATABASE_URL')
+
+# Handle postgres:// to postgresql:// conversion for newer SQLAlchemy
+if database_uri and database_uri.startswith('postgres://'):
+    database_uri = database_uri.replace('postgres://', 'postgresql://', 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = database_uri
+app.config["SECRET_KEY"] = SECRET_KEY or os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False  # Disable to save memory
 
 # Production optimizations
@@ -51,6 +71,10 @@ if os.environ.get('FLASK_ENV') == 'production':
     app.config["TESTING"] = False
 else:
     app.config["DEBUG"] = True
+
+# Validate critical configuration
+if not app.config["SQLALCHEMY_DATABASE_URI"]:
+    raise RuntimeError("SQLALCHEMY_DATABASE_URI must be set. Check your environment variables or config file.")
 
 # Init extensions
 db = SQLAlchemy(app)
@@ -67,16 +91,24 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "environment": os.environ.get('FLASK_ENV', 'development'),
-        "timestamp": str(db.func.now())
+        "database_configured": bool(app.config.get("SQLALCHEMY_DATABASE_URI"))
     }), 200
 
 # API status endpoint
 @app.route("/api/status")
 def api_status():
+    try:
+        # Test database connection
+        with db.engine.connect() as connection:
+            connection.execute(db.text("SELECT 1"))
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
     return jsonify({
         "api": "online",
         "version": "1.0",
-        "database": "connected"
+        "database": db_status
     }), 200
 
 @app.errorhandler(ValidationError)
@@ -106,7 +138,7 @@ def db_test():
 
 # Register blueprints
 from threaddit.users.routes import user
-from threaddit.subthreads.routes import threads  
+from threaddit.subthreads.routes import threads   
 from threaddit.posts.routes import posts
 from threaddit.comments.routes import comments
 from threaddit.reactions.routes import reactions
@@ -118,5 +150,3 @@ app.register_blueprint(posts, url_prefix='/api')
 app.register_blueprint(comments, url_prefix='/api')
 app.register_blueprint(reactions, url_prefix='/api')
 app.register_blueprint(messages, url_prefix='/api')
-
-# Remove static file serving and catch-all routes for API-only backend

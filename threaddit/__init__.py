@@ -65,19 +65,22 @@ app.config["SQLALCHEMY_DATABASE_URI"] = database_uri
 app.config["SECRET_KEY"] = SECRET_KEY or os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False  # Disable to save memory
 
+# Add SQLAlchemy engine options for better Neon compatibility
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+    "connect_args": {
+        "connect_timeout": 10,
+        "application_name": "discuss-app"
+    }
+}
+
 # Production optimizations
 if os.environ.get('FLASK_ENV') == 'production':
     app.config["DEBUG"] = False
     app.config["TESTING"] = False
 else:
     app.config["DEBUG"] = True
-
-# Debug logging - remove after fixing
-print(f"DEBUG - DATABASE_URI from config: {DATABASE_URI}")
-print(f"DEBUG - SQLALCHEMY_DATABASE_URI env var: {os.environ.get('SQLALCHEMY_DATABASE_URI')}")
-print(f"DEBUG - DATABASE_URL env var: {os.environ.get('DATABASE_URL')}")
-print(f"DEBUG - Final database_uri: {database_uri}")
-print(f"DEBUG - App config DATABASE_URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 # Validate critical configuration
 if not app.config["SQLALCHEMY_DATABASE_URI"]:
